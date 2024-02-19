@@ -94,6 +94,28 @@ ggplot() +
   geom_sf(data=district_level, aes(fill = non_ag_employed_per)) + 
   theme_void()
 
+# poverty map2015
+ggplot() + 
+  geom_sf(data = boundary, size = 1.5, color = "black") + 
+  ggtitle("Poverty rate (2015)") + 
+  scale_fill_gradient(low = "skyblue", high = "midnightblue", 
+                      labels = function(x) paste0(scales::comma(x), "%")) +
+  labs(fill = "Share of region") +
+  geom_sf(data=district_level, aes(fill = poverty_2015)) + 
+  theme_void()
+
+
+# poverty map2022
+ggplot() + 
+  geom_sf(data = boundary, size = 1.5, color = "black") + 
+  ggtitle("Poverty rate (2022)") + 
+  scale_fill_gradient(low = "skyblue", high = "midnightblue", 
+                      labels = function(x) paste0(scales::comma(x), "%")) +
+  labs(fill = "Share of region") +
+  geom_sf(data=district_level, aes(fill = poverty_2022)) + 
+  theme_void()
+
+
 
 # electricity access - by area
 electricity <- read_csv("electricity-regional.csv")
