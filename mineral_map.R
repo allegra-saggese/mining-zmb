@@ -10,7 +10,7 @@ library(maps)
 library(sf)
 library(tidyverse)
 
-setwd("C:/Users/SAGGESE/Documents/GitHub/zambia/raws")
+setwd("/Users/allegrasaggese/Documents/GitHub/mining-zmb/raws")
 
 # read in KMLs
 globalmines <- read_sf("global-mineral-depo-map.kml")

@@ -12,3 +12,4 @@ pv-output-zambia-geotiff
 *.zip
 *.rds
 *.rdata
+.Rproj.user

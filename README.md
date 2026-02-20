@@ -1,6 +1,6 @@
 # zambia
 summary analysis of electricity, industry and mining in zambia
-early data analysis to evaluate location of natural resources, mines, energy potential and industrial clusters
+study of copper prices + local economic conditions 
 
 ### data sources
 
@@ -15,3 +15,7 @@ Approximate locations and short descriptions of mines, deposits, and districts w
 # solar
 https://globalsolaratlas.info/download/zambia using the data for PVOUT - Photovoltaic power potential [kWh/kWp] 
 This data is from Solar Resource Atlas and was last updated March 2019 
+
+# zambia level data
+(1) https://rplumber.ilo.org/files/website/bulk/ref_area.html - ILO bulk download of file "ZMB_A" 
+(2) https://zambia.opendataforafrica.org/data/#topic=Population Central Statistical Office of Zambia, Zambia Population and Housing Census Data, 1969-202
