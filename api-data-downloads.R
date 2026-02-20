@@ -98,6 +98,51 @@ parse_compactdata <- function(payload, source_url) {
   })
 }
 
+extract_indicator_catalog <- function(payload, source_url) {
+  code_lists <- as_node_list(payload$Structure$CodeLists$CodeList)
+  if (length(code_lists) == 0) {
+    return(tibble::tibble())
+  }
+
+  indicator_list <- NULL
+  for (code_list in code_lists) {
+    codes <- as_node_list(code_list$Code)
+    code_values <- vapply(codes, function(code_node) {
+      as.character(code_node[["@value"]] %||% "")
+    }, character(1))
+    if ("PCOPP_USD" %in% code_values) {
+      indicator_list <- code_list
+      break
+    }
+  }
+
+  if (is.null(indicator_list)) {
+    return(tibble::tibble())
+  }
+
+  codes <- as_node_list(indicator_list$Code)
+  tibble::tibble(
+    indicator = vapply(codes, function(code_node) {
+      as.character(code_node[["@value"]] %||% NA_character_)
+    }, character(1)),
+    indicator_name = vapply(codes, function(code_node) {
+      desc <- code_node$Description
+      if (is.null(desc)) {
+        return(NA_character_)
+      }
+      as.character(desc[["#text"]] %||% desc %||% NA_character_)
+    }, character(1)),
+    source_url = source_url
+  ) %>%
+    dplyr::arrange(indicator)
+}
+
+download_imf_pcps_indicator_catalog <- function(timeout_sec = 45, tries = 3) {
+  url <- "https://dataservices.imf.org/REST/SDMX_JSON.svc/DataStructure/PCPS"
+  payload <- fetch_json_retry(url, timeout_sec = timeout_sec, tries = tries)
+  extract_indicator_catalog(payload, source_url = url)
+}
+
 download_imf_pcps_series <- function(indicator, start_period = "2000-01", timeout_sec = 45, tries = 3) {
   url <- paste0(
     "https://dataservices.imf.org/REST/SDMX_JSON.svc/CompactData/PCPS/M.",
@@ -109,49 +154,69 @@ download_imf_pcps_series <- function(indicator, start_period = "2000-01", timeou
   parse_compactdata(payload, url)
 }
 
-critical_mineral_codes <- tibble::tribble(
-  ~mineral,     ~indicator,    ~notes,
-  "Aluminum",   "PALUM_USD",   "IMF PCPS market price",
-  "Copper",     "PCOPP_USD",   "IMF PCPS market price",
-  "Iron ore",   "PIORECR_USD", "IMF PCPS market price",
-  "Lead",       "PLEAD_USD",   "IMF PCPS market price",
-  "Nickel",     "PNICK_USD",   "IMF PCPS market price",
-  "Tin",        "PTIN_USD",    "IMF PCPS market price",
-  "Uranium",    "PURAN_USD",   "IMF PCPS market price",
-  "Zinc",       "PZINC_USD",   "IMF PCPS market price"
-)
+choose_base_metals_indicator <- function(imf_indicator_catalog) {
+  if (nrow(imf_indicator_catalog) == 0) {
+    return(NA_character_)
+  }
 
-download_imf_critical_minerals <- function(start_period = "2000-01", timeout_sec = 45, tries = 3) {
-  purrr::map_dfr(seq_len(nrow(critical_mineral_codes)), function(i) {
-    mineral_row <- critical_mineral_codes[i, ]
-    series <- tryCatch(
-      download_imf_pcps_series(
-        indicator = mineral_row$indicator,
-        start_period = start_period,
-        timeout_sec = timeout_sec,
-        tries = tries
-      ),
-      error = function(e) {
-        warning(
-          sprintf(
-            "Skipping %s (%s): %s",
-            mineral_row$mineral,
-            mineral_row$indicator,
-            conditionMessage(e)
-          ),
-          call. = FALSE
+  exact <- imf_indicator_catalog %>%
+    dplyr::filter(
+      stringr::str_detect(
+        indicator_name,
+        stringr::regex(
+          "^Base Metals index, Commodity price index, Index, 2016\\s*=\\s*100, Index$",
+          ignore_case = TRUE
         )
-        tibble::tibble()
-      }
+      )
     )
-    dplyr::mutate(
-      series,
-      mineral = mineral_row$mineral,
-      notes = mineral_row$notes
+  if (nrow(exact) > 0) {
+    return(exact$indicator[[1]])
+  }
+
+  broad <- imf_indicator_catalog %>%
+    dplyr::filter(
+      stringr::str_detect(indicator_name, stringr::regex("Base Metals", ignore_case = TRUE)),
+      stringr::str_detect(indicator_name, stringr::regex("Commodity price index", ignore_case = TRUE)),
+      stringr::str_detect(indicator_name, stringr::regex("2016\\s*=\\s*100", ignore_case = TRUE))
     )
-  }) %>%
-    dplyr::mutate(date = suppressWarnings(lubridate::ym(time_period))) %>%
-    dplyr::arrange(mineral, date)
+  if (nrow(broad) > 0) {
+    return(broad$indicator[[1]])
+  }
+
+  fallback_candidates <- c("PBCMET_IX", "PBCMET_USD", "PBCMET")
+  matched <- fallback_candidates[fallback_candidates %in% imf_indicator_catalog$indicator]
+  if (length(matched) > 0) {
+    return(matched[[1]])
+  }
+
+  NA_character_
+}
+
+download_imf_base_metals_index <- function(imf_indicator_catalog, start_period = "2000-01", timeout_sec = 45, tries = 3) {
+  indicator <- choose_base_metals_indicator(imf_indicator_catalog)
+  if (is.na(indicator)) {
+    warning("Base metals index indicator was not found in IMF PCPS catalog.", call. = FALSE)
+    return(tibble::tibble())
+  }
+
+  series <- download_imf_pcps_series(
+    indicator = indicator,
+    start_period = start_period,
+    timeout_sec = timeout_sec,
+    tries = tries
+  )
+
+  series_name <- imf_indicator_catalog %>%
+    dplyr::filter(indicator == !!indicator) %>%
+    dplyr::pull(indicator_name) %>%
+    .[[1]] %||% "Base Metals index, Commodity price index, Index, 2016=100, Index"
+
+  dplyr::mutate(
+    series,
+    series_name = series_name,
+    date = suppressWarnings(lubridate::ym(time_period))
+  ) %>%
+    dplyr::arrange(date)
 }
 
 extract_average_price_per_carat <- function(text) {
@@ -263,21 +328,40 @@ tries <- as.integer(Sys.getenv("API_MAX_TRIES", unset = "3"))
 start_period <- Sys.getenv("IMF_START_PERIOD", unset = "2000-01")
 max_gemfields_pages <- as.integer(Sys.getenv("GEMFIELDS_MAX_PAGES", unset = "4"))
 
-imf_critical <- download_imf_critical_minerals(
-  start_period = start_period,
-  timeout_sec = timeout_sec,
-  tries = tries
-)
-readr::write_csv(
-  imf_critical,
-  file.path(output_dir, "imf_pcps_critical_minerals_monthly.csv")
+imf_indicator_catalog <- tryCatch(
+  download_imf_pcps_indicator_catalog(timeout_sec = timeout_sec, tries = tries),
+  error = function(e) {
+    warning(sprintf("Could not download IMF PCPS indicator catalog: %s", conditionMessage(e)), call. = FALSE)
+    tibble::tibble()
+  }
 )
 
-imf_copper <- dplyr::filter(imf_critical, indicator == "PCOPP_USD")
-readr::write_csv(
-  imf_copper,
-  file.path(output_dir, "imf_pcps_copper_monthly.csv")
+if (nrow(imf_indicator_catalog) > 0) {
+  readr::write_csv(
+    imf_indicator_catalog,
+    file.path(output_dir, "imf_pcps_indicator_catalog.csv")
+  )
+}
+
+imf_base_metals <- tryCatch(
+  download_imf_base_metals_index(
+    imf_indicator_catalog = imf_indicator_catalog,
+    start_period = start_period,
+    timeout_sec = timeout_sec,
+    tries = tries
+  ),
+  error = function(e) {
+    warning(sprintf("Could not download IMF base metals index: %s", conditionMessage(e)), call. = FALSE)
+    tibble::tibble()
+  }
 )
+
+if (nrow(imf_base_metals) > 0) {
+  readr::write_csv(
+    imf_base_metals,
+    file.path(output_dir, "imf_pcps_base_metals_index_monthly.csv")
+  )
+}
 
 gemfields_auction <- download_gemfields_auction_prices(
   max_pages = max_gemfields_pages,
@@ -305,7 +389,11 @@ readr::write_csv(
 )
 
 message("Saved files:")
-message("- ", file.path(output_dir, "imf_pcps_critical_minerals_monthly.csv"))
-message("- ", file.path(output_dir, "imf_pcps_copper_monthly.csv"))
+if (nrow(imf_indicator_catalog) > 0) {
+  message("- ", file.path(output_dir, "imf_pcps_indicator_catalog.csv"))
+}
+if (nrow(imf_base_metals) > 0) {
+  message("- ", file.path(output_dir, "imf_pcps_base_metals_index_monthly.csv"))
+}
 message("- ", file.path(output_dir, "gemfields_auction_avg_price_per_carat.csv"))
 message("- ", file.path(output_dir, "gemfields_auction_avg_price_per_carat_monthly.csv"))
